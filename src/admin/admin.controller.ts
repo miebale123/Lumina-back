@@ -6,48 +6,71 @@ import {
   Param,
   Get,
   ParseIntPipe,
+  NotFoundException,
 } from '@nestjs/common';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { UsersService } from 'src/users/users.service';
 import { RolesService } from 'src/users/roles.service';
-import { UserRolesService } from 'src/users/user-roles.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Broker } from 'src/brokers/broker.entity';
+import { Repository } from 'typeorm';
+import { User } from 'src/users/entities/user.entity';
+import { UserRole } from 'src/users/entities/user-roles.entity';
+import { Public } from 'src/common';
 
-@Controller('admin-page')
+class BrokerDto {
+  roleName: string;
+  brokerCompanyName: string;
+  location: string;
+}
+
 @UseGuards(RolesGuard)
 @Roles('admin')
+@Controller('admin-page')
 export class AdminController {
   constructor(
-    private readonly usersService: UsersService,
     private readonly rolesService: RolesService,
-    private readonly userRolesService: UserRolesService,
+
+    @InjectRepository(Broker)
+    private readonly brokerRepo: Repository<Broker>,
+
+    @InjectRepository(UserRole)
+    private readonly userRoleRepo: Repository<UserRole>,
   ) {}
 
-  @Patch('users/:id/role')
-  async updateUserRole(
-    @Param('id', ParseIntPipe) id: number,
-    @Body('role') roleName: string,
-  ) {
-    // 1. Find the user
-    const user = await this.usersService.findById(id);
-    if (!user) {
-      throw new Error(`user with id ${id} not found`);
-    }
+  @Get('pendingBrokers')
+  async getpendingBrokers() {
+    return this.brokerRepo.find({
+      where: { status: 'pending',  },
+      relations: ['user'],
+    });
+  }
 
-    // 2. Find or create role
+  @Patch('pendingBrokers/:id/approve')
+  async approveBroker(@Param('id') brokerId: string) {
+    const broker = await this.brokerRepo.findOne({
+      where: { id: brokerId },
+      relations: ['user'],
+    });
+
+    if (!broker) throw new NotFoundException('Broker not found');
+
+    broker.status = 'active';
+
+    const roleName = 'expert';
     let role = await this.rolesService.findRole(roleName);
     if (!role) {
       role = await this.rolesService.createRole(roleName);
     }
 
-    // 3. Update user's role (via pivot table)
-    await this.userRolesService.assignRoleToUser(user, role.id);
+    const userRole = this.userRoleRepo.create({
+      user: broker.user,
+      role,
+    });
 
-    return { message: `User ${user.email} role updated to ${role.name}` };
-  }
+    await this.userRoleRepo.save(userRole);
 
-  @Get('users')
-  async getAllUsers() {
-    return this.usersService.getUsers();
+    return await this.brokerRepo.save(broker);
   }
 }

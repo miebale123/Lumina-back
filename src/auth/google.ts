@@ -1,18 +1,3 @@
-//   @Public()
-//   @HttpCode(HttpStatus.CREATED)
-//   @AuditExclude()
-//   @Post('sign-up')
-//   async signup(@Body() dto: SignupDto) {
-//     return this.authService.signup(dto);
-//   }
-
-//   @Post('verify')
-//   @UseInterceptors(AuthResponseInterceptor)
-//   @Public()
-//   async verifyEmail(@Body() dto: VerificationDto): Promise<AuthInternal> {
-//     return await this.authService.verifyEmail(dto.otp);
-//   }
-
 
 
 //   @Public()

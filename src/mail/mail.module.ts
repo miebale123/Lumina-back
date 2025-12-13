@@ -47,7 +47,7 @@ export class MailService {
     });
   }
 
-  async sendHouseUpdated(email: string, house) {
+  async sendHouseUploaded(email: string, house) {
     return this.send({
       to: email,
       subject: 'A House You Saved Has Been Updated',

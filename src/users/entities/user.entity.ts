@@ -7,17 +7,17 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   DeleteDateColumn,
-  ManyToOne,
   OneToOne,
-  JoinColumn,
 } from 'typeorm';
 import type { Relation } from 'typeorm';
 import { UserSession } from './user-session.entity';
 import { PasswordReset } from './password-reset.entity';
-import { Bookmark, House, Notification } from 'src/houses/houses.entity';
+import { House } from 'src/houses/houses.entity';
 import { UserProfile } from './user-profile.entity';
 import { UserRole } from './user-roles.entity';
-import { Broker } from 'src/broker/broker.entity';
+import { Broker } from 'src/brokers/broker.entity';
+import { Bookmark } from 'src/bookmarks/bookmark.entity';
+import { Notification } from 'src/notifications/notification.entity';
 
 export type UserStatus = 'active' | 'blocked' | 'deleted' | 'pending';
 

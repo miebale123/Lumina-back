@@ -9,6 +9,7 @@ export interface AuthUser {
   accessToken?: string;
 }
 
+//remember that the startegy is from google-oauth20
 @Injectable()
 export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   constructor() {

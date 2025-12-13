@@ -8,8 +8,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { RolesService } from 'src/users/roles.service';
-import { UserRolesService } from 'src/users/user-roles.service';
 import { compare, hash } from 'src/auth/bcrypt.util';
+import { UserRole } from './entities/user-roles.entity';
 
 @Injectable()
 export class UsersService {
@@ -17,52 +17,25 @@ export class UsersService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly roleService: RolesService,
-    private readonly userRolesService: UserRolesService,
+    @InjectRepository(UserRole)
+    private readonly userRoleRepo: Repository<UserRole>,
   ) {}
 
   async getUsers() {
     return this.userRepo.find({ relations: ['userRoles', 'userRoles.role'] });
   }
 
-  async createAdmin(email: string, password: string) {
-    const hashedPassword = await hash(password);
-    const user = this.userRepo.create({
-      email,
-      hashedPassword,
-      status: 'active',
-      isVerified: true,
-    });
-
-    await this.userRepo.save(user);
-
-    let adminRole = await this.roleService.findRole('admin');
-    if (!adminRole) {
-      adminRole = await this.roleService.createRole('admin');
-    }
-
-    await this.userRolesService.assignRoleToUser(user, adminRole.id);
-
-    // ★ Add expert role
-    let expertRole = await this.roleService.findRole('expert');
-    if (!expertRole) {
-      expertRole = await this.roleService.createRole('expert');
-    }
-
-    await this.userRolesService.assignRoleToUser(user, expertRole.id);
-  }
-
+  // promise<User>
   async createUser(
     email: string,
     password?: string | null,
     verifytoken?: string | null,
     providerId?: string | null,
     provider?: string | null,
-  ): Promise<User> {
+  ) {
     const hashedPassword = password ? await hash(password) : null;
-
     const hashedOTP = verifytoken ? await hash(verifytoken) : null;
 
-    // 2. Create user
     const user = this.userRepo.create({
       email,
       status: 'pending',
@@ -72,20 +45,33 @@ export class UsersService {
       providerId,
     });
 
+    // Find or create default "user" role
     let role = await this.roleService.findRole('user');
-
     if (!role) {
       role = await this.roleService.createRole('user');
     }
+
     try {
+      // Save user first
       const savedUser = await this.userRepo.save(user);
-      await this.userRolesService.assignRoleToUser(user, role.id,);
-      return savedUser;
-      // 3. Save
+
+      // Create UserRole linking user → role
+      const userRole = this.userRoleRepo.create({
+        user: savedUser,
+        role,
+      });
+
+      await this.userRoleRepo.save(userRole);
+
+      return {
+        ...savedUser,
+        role: role.name,
+      };
     } catch (err) {
       if (err.code === '23505') {
         throw new ConflictException('Email already exists');
       }
+
       throw new InternalServerErrorException(
         'Failed to create user, please try again',
       );
@@ -100,23 +86,19 @@ export class UsersService {
   }
 
   async findByEmail(email: string) {
-    const the_user_is = await this.userRepo.findOne({
+    const user = await this.userRepo.findOne({
       where: { email },
       relations: ['userRoles', 'userRoles.role'],
     });
 
-    const fullUser = await this.userRepo.findOne({
-      where: { email: 'admin@gmail.com' },
-      relations: ['userRoles', 'userRoles.role'],
-    });
-
-    if (!fullUser) return null;
+    if (!user) return null;
 
     console.log(
-      'Admin roles are:',
-      fullUser.userRoles.map((r) => r.role.name),
+      'User roles are:',
+      user.userRoles.map((r) => r.role.name),
     );
-    return the_user_is;
+
+    return user;
   }
 
   async updateUser(id: number, data: Partial<User>): Promise<void> {

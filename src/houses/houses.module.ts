@@ -6,78 +6,26 @@ import {
   Get,
   Param,
   NotFoundException,
-  Patch,
   Delete,
   UploadedFile,
   UseInterceptors,
   Query,
   forwardRef,
+  BadRequestException,
 } from '@nestjs/common';
-import {
-  v2 as cloudinary,
-  UploadApiErrorResponse,
-  UploadApiResponse,
-} from 'cloudinary';
 import { InjectRepository, TypeOrmModule } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
-import {
-  Bookmark,
-  House,
-  HouseType,
-  Notification,
-  PropertyType,
-} from './houses.entity';
+import { Repository } from 'typeorm';
 import { GetUser, Public } from 'src/common';
 import { User } from 'src/users/entities/user.entity';
-import { WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
-import { OnGatewayConnection, OnGatewayDisconnect } from '@nestjs/websockets';
-import { Server } from 'socket.io';
-import { MailService } from 'src/mail/mail.module';
 import { MailModule } from 'src/mail/mail.module';
-import { Readable } from 'stream';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { Broker } from 'src/broker/broker.entity';
-import { HouseDto } from './house.dto';
-
-@WebSocketGateway({ cors: { origin: '*' } })
-class NotificationGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  @WebSocketServer()
-  server: Server;
-
-  private onlineUsers = new Set<number>();
-
-  handleConnection(socket: any) {
-    const userId = Number(socket.handshake.query.userId);
-    if (userId) {
-      socket.join(String(userId));
-      this.onlineUsers.add(userId);
-    }
-  }
-
-  handleDisconnect(socket: any) {
-    const userId = Number(socket.handshake.query.userId);
-    if (userId) {
-      this.onlineUsers.delete(userId);
-    }
-  }
-
-  isUserOnline(userId: number) {
-    return this.onlineUsers.has(userId);
-  }
-
-  sendToUser(userId: number, payload: any) {
-    this.server.to(String(userId)).emit('notification', payload);
-  }
-
-  sendToAll(payload: any) {
-    this.server.emit('notification', payload);
-  }
-}
-
-class BrokerDto {
-  username: string;
-  location: string;
-}
+import { Broker } from 'src/brokers/broker.entity';
+import { NotificationGateway } from '../notifications/notification.service';
+import { Bookmark } from 'src/bookmarks/bookmark.entity';
+import { House } from './houses.entity';
+import { Notification } from '../notifications/notification.entity';
+import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
+import { CreateHouseDto } from './house.dto';
 
 @Controller('houses')
 export class HousesController {
@@ -85,143 +33,64 @@ export class HousesController {
     @InjectRepository(House)
     private houseRepository: Repository<House>,
 
-    private notificationGateway: NotificationGateway,
-
-    @InjectRepository(Bookmark)
-    private bookmarkRepo: Repository<Bookmark>,
-
-    @InjectRepository(Notification)
-    private notificationRepo: Repository<Notification>,
-
-    private mailService: MailService,
-
-    @InjectRepository(User)
-    private userRepo: Repository<User>,
-
     @InjectRepository(Broker)
     private brokerRepo: Repository<Broker>,
-  ) {
-    cloudinary.config({
-      cloud_name: process.env.CLOUDINARY_NAME,
-      api_key: process.env.CLOUDINARY_KEY,
-      api_secret: process.env.CLOUDINARY_SECRET,
-    });
-  }
 
-  @Post('upload-broker-info')
-  @UseInterceptors(FileInterceptor('file'))
-  async uploadBrokerInfo(
-    @UploadedFile() file: Express.Multer.File,
-    @Body() dto: BrokerDto,
-    @GetUser() user: User,
-  ) {
-    const result: UploadApiResponse = await new Promise((resolve, reject) => {
-      const upload = cloudinary.uploader.upload_stream(
-        { resource_type: 'auto' },
-        (error: UploadApiErrorResponse, result: UploadApiResponse) => {
-          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
-          if (error) return reject(error);
-          resolve(result);
-        },
-      );
-      Readable.from(file.buffer).pipe(upload);
-    });
-
-    // Find an available broker in the same location
-    const broker = await this.brokerRepo.findBy({ location: dto.location });
-
-    console.log('the broker near by is: ', broker);
-
-    const newBroker = this.brokerRepo.create({});
-
-    const saved = await this.brokerRepo.save(newBroker);
-
-    return {
-      savedHouse: {
-        ...saved,
-        userId: saved.user.id,
-        status: saved.status,
-      },
-    };
-  }
-
-  @Patch('approve/:id')
-  async approveHouse(@Param('id') id: string, @GetUser() user: User) {
-    const house = await this.houseRepository.findOne({ where: { id } });
-    // check if user is broker
-
-    if (!house) throw new NotFoundException('house not found');
-
-    house.status = 'approved';
-    await this.houseRepository.save(house);
-  }
+    private cloudnaryService: CloudinaryService,
+  ) {}
 
   @Post('upload-house')
   @UseInterceptors(FileInterceptor('file'))
   async uploadHouse(
     @UploadedFile() file: Express.Multer.File,
-    @Body() dto: HouseDto,
+    @Body() dto: CreateHouseDto,
     @GetUser() user: User,
   ) {
-    const result: UploadApiResponse = await new Promise((resolve, reject) => {
-      const upload = cloudinary.uploader.upload_stream(
-        { resource_type: 'auto' },
-        (error: UploadApiErrorResponse, result: UploadApiResponse) => {
-          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
-          if (error) return reject(error);
-          resolve(result);
-        },
-      );
-      Readable.from(file.buffer).pipe(upload);
+    if (!file) throw new BadRequestException('File not received');
+
+    const result = await this.cloudnaryService.uploadFile(file.buffer);
+
+    const bedroom = parseInt(dto.bedroom);
+    const bathroom = parseInt(dto.bathroom);
+    const price = parseFloat(dto.price);
+
+    if (isNaN(bedroom) || isNaN(bathroom) || isNaN(price)) {
+      throw new BadRequestException('Invalid numeric fields');
+    }
+
+    const brokers = await this.brokerRepo.find({
+      where: { location: dto.location, status: 'active' },
     });
 
-    // Find an available broker in the same location
-    const broker = await this.brokerRepo.findBy({ location: dto.location });
-
-    console.log('the broker near by is: ', broker);
+    const broker = brokers.length ? brokers[0] : null;
 
     const newHouse = this.houseRepository.create({
-      type: dto.type,
-      property_type: dto.property_type,
       secure_url: result.secure_url,
       location: dto.location,
-      price: dto.price,
-      previousPrice: null,
-      priceReduced: false,
-      bedroom: dto.bedroom,
-      bathroom: dto.bathroom,
+      price,
+      bedroom,
+      bathroom,
       area: dto.area,
-      user, // logged-in user, required
-      status: 'pending',
+      user,
+      status: 'pending_initial',
+      assignedBroker: broker,
     });
 
     const saved = await this.houseRepository.save(newHouse);
 
+    const savedHouse = await this.houseRepository.findOne({
+      where: { id: saved.id },
+      relations: ['assignedBroker', 'user'],
+    });
+
     return {
       savedHouse: {
-        ...saved,
-        userId: saved.user.id,
-        status: saved.status,
-        assignedBrokerId: saved.assignedBroker?.id,
+        ...savedHouse,
+        userId: savedHouse?.user.id,
+        assignedBrokerCompanyName:
+          savedHouse?.assignedBroker?.brokerCompanyName || null,
       },
     };
-  }
-
-  @Get('bookmarks')
-  async getBookmarks(@GetUser() user: User) {
-    return this.bookmarkRepo.find({
-      where: { user: { id: user.id } },
-      relations: ['house'],
-    });
-  }
-
-  @Get('notifications')
-  async getNotifications(@GetUser() user: User) {
-    return this.notificationRepo.find({
-      where: { user: { id: user.id } },
-      relations: ['house', 'user'],
-      order: { created_at: 'DESC' },
-    });
   }
 
   @Public()
@@ -233,14 +102,15 @@ export class HousesController {
     @Query('bedroomMax') bedroomMax?: string,
     @Query('bathroomMin') bathroomMin?: string,
     @Query('bathroomMax') bathroomMax?: string,
-    @Query('property_type') property_type?: string,
-    @Query('type') type?: string,
     @Query('location') location?: string,
   ) {
     const qb = this.houseRepository
       .createQueryBuilder('house')
       .leftJoinAndSelect('house.user', 'user')
+      .leftJoinAndSelect('house.assignedBroker', 'assignedBroker') // <-- join broker
       .orderBy('house.created_at', 'ASC');
+
+    qb.andWhere('house.status = :status', { status: 'approved' });
 
     if (min) qb.andWhere('house.price >= :min', { min });
     if (max) qb.andWhere('house.price <= :max', { max });
@@ -258,10 +128,6 @@ export class HousesController {
         qb.andWhere('house.bathroom <= :bathroomMax', { bathroomMax });
     }
 
-    if (property_type)
-      qb.andWhere('house.property_type = :property_type', { property_type });
-    if (type) qb.andWhere('house.type = :type', { type });
-
     if (location) {
       qb.andWhere('LOWER(house.location) LIKE LOWER(:loc)', {
         loc: `%${location}%`,
@@ -272,105 +138,39 @@ export class HousesController {
 
     return houses.map((h) => ({
       id: h.id,
-      type: h.type,
-      property_type: h.property_type,
       secure_url: h.secure_url,
       location: h.location,
       price: h.price,
       previousPrice: h.previousPrice,
-      priceReduced: h.priceReduced,
+      // priceReduced: h.priceReduced,
       bedroom: h.bedroom,
       bathroom: h.bathroom,
       area: h.area,
       userId: h.user.id,
+      assignedBrokerCompanyName: h.assignedBroker?.brokerCompanyName,
     }));
   }
 
+  @Public()
   @Get(':id')
   async getHouse(@Param('id') id: string) {
-    const house = await this.houseRepository.findOneBy({ id });
+    const house = await this.houseRepository.findOne({
+      where: { id },
+      relations: ['user', 'assignedBroker'],
+    });
 
     if (!house) throw new NotFoundException('House not found');
-    return house;
-  }
-
-  @Patch(':id')
-  async updateHouse(
-    @Param('id') id: string,
-    @Body() dto: HouseDto,
-    @GetUser() user: User,
-  ) {
-    const existing = await this.houseRepository.findOne({
-      where: { id, user: { id: user.id } as any },
-      relations: ['user'],
-    });
-
-    if (!existing) throw new NotFoundException('House not found');
-
-    // Save previous price for comparison
-    const prevPrice = existing.price;
-
-    // Update fields if provided
-    if (dto.location !== undefined) existing.location = dto.location;
-    if (dto.price !== undefined) existing.price = dto.price;
-    if (dto.bedroom !== undefined) existing.bedroom = dto.bedroom;
-    if (dto.bathroom !== undefined) existing.bathroom = dto.bathroom;
-    if (dto.area !== undefined) existing.area = dto.area;
-
-    // Compute price reduction
-    existing.previousPrice = prevPrice;
-    existing.priceReduced = existing.price < prevPrice;
-
-    const updatedHouse = await this.houseRepository.save(existing);
-
-    // Notify users who bookmarked
-    const saversOfHouse = await this.bookmarkRepo.find({
-      where: { house: { id: existing.id } },
-      relations: ['user', 'house'],
-    });
-
-    for (const bookmark of saversOfHouse) {
-      const payload = {
-        type: 'price-drops: ',
-        houseId: updatedHouse.id,
-      };
-
-      const notification = this.notificationRepo.create({
-        ...payload,
-        user: bookmark.user,
-        house: bookmark.house,
-      });
-      await this.notificationRepo.save(notification);
-
-      this.notificationGateway.sendToUser(bookmark.user.id, payload);
-
-      if (!this.notificationGateway.isUserOnline(bookmark.user.id)) {
-        try {
-          await this.mailService.sendHouseUpdated(
-            bookmark.user.email,
-            bookmark.house,
-          );
-        } catch (err) {
-          console.error('Failed to send email', err);
-        }
-      }
-    }
 
     return {
-      updatedHouse: {
-        id: updatedHouse.id,
-        type: updatedHouse.type,
-        property_type: updatedHouse.property_type,
-        secure_url: updatedHouse.secure_url,
-        location: updatedHouse.location,
-        price: updatedHouse.price,
-        previousPrice: updatedHouse.previousPrice,
-        priceReduced: updatedHouse.priceReduced,
-        bedroom: updatedHouse.bedroom,
-        bathroom: updatedHouse.bathroom,
-        area: updatedHouse.area,
-        userId: updatedHouse.user.id,
-      },
+      id: house.id,
+      secure_url: house.secure_url,
+      location: house.location,
+      price: house.price,
+      bedroom: house.bedroom,
+      bathroom: house.bathroom,
+      area: house.area,
+      userId: house.user.id,
+      assignedBrokerCompanyName: house.assignedBroker?.brokerCompanyName,
     };
   }
 
@@ -381,46 +181,6 @@ export class HousesController {
 
     return this.houseRepository.delete(id);
   }
-
-  @Delete('deleteNotification/:id')
-  async deleteNotification(@Param('id') id: string, @GetUser() user: User) {
-    const existing = await this.notificationRepo.findOne({
-      where: { id, user: { id: user.id } },
-      relations: ['user'],
-    });
-
-    const result = await this.notificationRepo.delete(id);
-    return { result };
-  }
-  @Delete('deleteBookmark/:id')
-  async deleteBookmark(@Param('id') id: string, @GetUser() user: User) {
-    const existing = await this.bookmarkRepo.findOne({
-      where: { id, user: { id: user.id } },
-      relations: ['user'],
-    });
-
-    const result = await this.bookmarkRepo.delete(id);
-    return { result };
-  }
-
-  @Post('create-bookmark')
-  async createBookmark(
-    @Body('houseId') houseId: string,
-    @GetUser() user: User,
-  ) {
-    const house = await this.houseRepository.findOneBy({ id: houseId });
-
-    if (!house) throw new NotFoundException('House not found');
-
-    const newBookmark = this.bookmarkRepo.create({
-      user,
-      house,
-    });
-
-    const savedBookmark = await this.bookmarkRepo.save(newBookmark);
-
-    return { message: 'Bookmarked', savedBookmark };
-  }
 }
 
 @Module({
@@ -430,6 +190,6 @@ export class HousesController {
     forwardRef(() => HousesModule),
   ],
   controllers: [HousesController],
-  providers: [NotificationGateway],
+  providers: [NotificationGateway, CloudinaryService],
 })
 export class HousesModule {}

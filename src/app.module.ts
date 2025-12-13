@@ -13,6 +13,9 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AuditInterceptor } from './audit/audit.interceptor';
 import { AuthModule } from './auth';
 import { SettingsModule } from './settings.module';
+import { BookmarksModule } from './bookmarks/bookmarks.module';
+import { BrokersModule } from './brokers/brokers.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Controller('/')
 class AppController {
@@ -63,9 +66,11 @@ class AppController {
     UsersModule,
     AdminModule,
     AuditModule,
-    SettingsModule
-    // HousesModule,
-    // BookmarkModule,
+    SettingsModule,
+    HousesModule,
+    BookmarksModule,
+    BrokersModule,
+    NotificationsModule
   ],
   providers: [
     GlobalExceptionFilter,

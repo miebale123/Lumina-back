@@ -9,7 +9,6 @@ export class TokenService {
   constructor(private readonly jwtService: JwtService) {}
 
   async getAccessToken(user: User) {
-    // Make sure roles are loaded (userRoles relation)
     const roles = user.userRoles?.map((ur) => ur.role.name) || [];
 
     const payload: JwtPayload = {

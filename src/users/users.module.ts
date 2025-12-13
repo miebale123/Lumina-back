@@ -7,11 +7,10 @@ import { RolesService } from 'src/users/roles.service';
 import { UserSession } from './entities/user-session.entity';
 import { PasswordResetService } from './password-reset.service';
 import { PasswordReset } from './entities/password-reset.entity';
-import { UserRolesService } from 'src/users/user-roles.service';
 import { UserProfile } from './entities/user-profile.entity';
 import { Role } from './entities/roles.entity';
 import { UserRole } from './entities/user-roles.entity';
-import { Broker } from 'src/broker/broker.entity';
+import { Broker } from 'src/brokers/broker.entity';
 
 @Module({
   imports: [
@@ -27,12 +26,7 @@ import { Broker } from 'src/broker/broker.entity';
     forwardRef(() => HousesModule),
     // forwardRef(() => BookmarkModule),
   ],
-  providers: [
-    UsersService,
-    RolesService,
-    UserRolesService,
-    PasswordResetService,
-  ],
-  exports: [UsersService, RolesService, UserRolesService, PasswordResetService],
+  providers: [UsersService, RolesService, PasswordResetService],
+  exports: [UsersService, RolesService, PasswordResetService],
 })
 export class UsersModule {}

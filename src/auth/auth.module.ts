@@ -14,18 +14,17 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { GetRefreshToken } from './decorators';
-import { GetUser, Public } from 'src/common/decorators';
+import { Public } from 'src/common/decorators';
 import { AuditExclude } from 'src/audit/audit-exclude.decorator';
-import { AuthGuard, PassportModule, PassportStrategy } from '@nestjs/passport';
+import { PassportModule } from '@nestjs/passport';
 import express from 'express';
-import { JwtModule, JwtService } from '@nestjs/jwt';
+import { JwtModule } from '@nestjs/jwt';
 import { UsersService } from 'src/users/users.service';
 import { InjectRepository, TypeOrmModule } from '@nestjs/typeorm';
 import { UserSession } from 'src/users/entities/user-session.entity';
 import { Repository } from 'typeorm';
 import { compare, hash } from './bcrypt.util';
 import { TokenService } from './services/token.service';
-import { Injectable } from '@nestjs/common';
 import {
   SigninDto,
   SignupDto,
@@ -35,23 +34,16 @@ import { randomInt } from 'crypto';
 import { AuthResponseInterceptor } from './interceptors';
 import { AuthInternal } from './interfaces';
 import { MailModule, MailService } from 'src/mail/mail.module';
-import { Strategy } from 'passport-google-oauth20';
 import { User } from 'src/users/entities/user.entity';
 import { PasswordReset } from 'src/users/entities/password-reset.entity';
 import { configuration } from 'src/config/app.config';
 import { ConfigType } from '@nestjs/config';
 import { UsersModule } from 'src/users/users.module';
-import { JwtStrategy } from './strategies';
+import { GoogleStrategy, JwtStrategy } from './strategies';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { PasswordResetService } from 'src/users/password-reset.service';
-
-export interface AuthUser {
-  email?: string;
-  provider: string;
-  providerId: string;
-  accessToken?: string;
-}
+import { UserRole } from 'src/users/entities/user-roles.entity';
 
 @Controller('auth')
 export class AuthController {
@@ -74,7 +66,13 @@ export class AuthController {
 
     const verifytoken = String(randomInt(100000, 999999));
 
-    await this.userService.createUser(email, password, verifytoken);
+    const roles = await this.userService.createUser(
+      email,
+      password,
+      verifytoken,
+    );
+
+    console.log('user roles are: ', roles);
 
     await this.mailService.sendVerifyCode(email, verifytoken);
 
@@ -112,10 +110,13 @@ export class AuthController {
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
 
+    const isProd = process.env.NODE_ENV === 'production';
+
     res.cookie('refresh-token', refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: isProd ? 'none' : 'lax', // <— change this
+
       maxAge: 7 * 24 * 60 * 60 * 1000,
       path: '/',
     });
@@ -128,17 +129,20 @@ export class AuthController {
     };
   }
 
+  //  Promise<AuthInternal>
   @Public()
   @AuditExclude()
-  @UseInterceptors(AuthResponseInterceptor)
+  // @UseInterceptors(AuthResponseInterceptor)
   @Post('sign-in')
   async signin(
     @Body() dto: SigninDto,
     @Res({ passthrough: true }) res: express.Response,
-  ): Promise<AuthInternal> {
+  ) {
     const user = await this.userService.findByEmail(dto.email);
 
     if (!user) throw new UnauthorizedException('User not found');
+
+    const roles = user.userRoles;
 
     const isMatch = await compare(dto.password, user.hashedPassword!);
 
@@ -156,19 +160,23 @@ export class AuthController {
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
 
+    const isProd = process.env.NODE_ENV === 'production';
+
     res.cookie('refresh-token', refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax', // <— change this
+
       maxAge: 7 * 24 * 60 * 60 * 1000,
       path: '/',
     });
 
     return {
-      message: 'signed in successfully',
+      message: 'signed in successfully right',
       email: user.email,
       accessToken,
       refreshToken,
+      roles,
     };
   }
 
@@ -220,10 +228,13 @@ export class AuthController {
     });
     await this.sessionRepo.save(newSession);
 
+    const isProd = process.env.NODE_ENV === 'production';
+
     res.cookie('refresh-token', newRefreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax', // <— change this
+
       maxAge: 7 * 24 * 60 * 60 * 1000,
       path: '/',
     });
@@ -252,10 +263,12 @@ export class AuthController {
       }
     }
 
+    const isProd = process.env.NODE_ENV === 'production';
+
     res.clearCookie('refresh-token', {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
       path: '/',
     });
 
@@ -263,44 +276,10 @@ export class AuthController {
   }
 }
 
-@Injectable()
-export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
-  constructor() {
-    const clientID = process.env.GOOGLE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    const callbackURL = process.env.GOOGLE_CALLBACK_URL;
-
-    if (!clientID || !clientSecret) {
-      throw new Error('Google client ID and secret not found');
-    }
-
-    super({
-      clientID,
-      clientSecret,
-      callbackURL,
-      scope: ['email', 'profile'],
-    });
-  }
-
-  validate(accessToken: string, refreshToken: string, profile: any): AuthUser {
-    const email =
-      profile?.emails && profile.emails.length > 0
-        ? profile.emails[0].value
-        : null;
-
-    return {
-      email: email ?? undefined,
-      provider: 'google',
-      providerId: profile?.id ?? 'unknown',
-      accessToken,
-    };
-  }
-}
-
 @Module({
   imports: [
     PassportModule.register({ defaultStrategy: 'jwt' }),
-    TypeOrmModule.forFeature([User, UserSession, PasswordReset]),
+    TypeOrmModule.forFeature([User, UserSession, UserRole, PasswordReset]),
     JwtModule.registerAsync({
       inject: [configuration.KEY],
       useFactory: (config: ConfigType<typeof configuration>) => ({

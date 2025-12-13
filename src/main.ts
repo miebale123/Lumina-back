@@ -6,8 +6,8 @@ import { GlobalExceptionFilter } from './common/filters/global-exception.filter'
 import type { ConfigType } from '@nestjs/config';
 import { configuration } from './config/app.config';
 import { AppModule } from './app.module';
-import { GlobalZodPipe } from './auth/dto/auth.validation';
 import { AdminSeederService } from './admin/admin-seeder.service';
+import { GlobalZodPipe } from './zod.validation';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
@@ -16,7 +16,8 @@ async function bootstrap() {
 
   app.enableCors({
     // origin: [config.frontEndLive, config.frontEndLocal],
-    origin: ['http://localhost:4200'],
+    origin: ['http://localhost:4200', 'http://localhost:4201'],
+
     credentials: true,
   });
   app.enableShutdownHooks();

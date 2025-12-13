@@ -1,21 +1,11 @@
 import {
-  Column,
   Entity,
-  OneToMany,
   PrimaryGeneratedColumn,
-  Unique,
   CreateDateColumn,
   UpdateDateColumn,
-  DeleteDateColumn,
   ManyToOne,
-  OneToOne,
-  JoinColumn,
 } from 'typeorm';
-import type { Relation } from 'typeorm';
-import { UserSession } from './user-session.entity';
-import { PasswordReset } from './password-reset.entity';
-import { Bookmark, House, Notification } from 'src/houses/houses.entity';
-import {  User } from './user.entity';
+import { User } from './user.entity';
 import { Role } from './roles.entity';
 
 @Entity('user_roles')
